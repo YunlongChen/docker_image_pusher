@@ -1,1 +1,2 @@
-rabbitmq:4.0.6-management-alpine
+# 这里每次都只存在新的镜像，或者是需要保持latest标签的镜像，否则可能造成Github Actions 的资源浪费
+homeassistant/home-assistant:2025.2.0

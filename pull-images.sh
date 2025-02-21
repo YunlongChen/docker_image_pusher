@@ -1,0 +1,2 @@
+docker pull stanic-docker.pkg.coding.net/qing/mirror/rabbitmq:4.0.6-management-alpine
+docker tag stanic-docker.pkg.coding.net/qing/mirror/rabbitmq:4.0.6-management-alpine rabbitmq:4.0.6-management-alpine
