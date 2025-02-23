@@ -1,3 +1,7 @@
+# 2025-02-24
+snowdreamtech/frps:0.61.1
+postgres:17.3-alpine
+
 homeassistant/home-assistant:2025.2.4
 homeassistant/home-assistant:2025.2.0
 rabbitmq:4.0.6-management-alpine
