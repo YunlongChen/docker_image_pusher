@@ -48,7 +48,38 @@ jobs:
           # 登录阿里云镜像仓库
           docker login -u $ALIYUN_REGISTRY_USER -p $ALIYUN_REGISTRY_PASSWORD $ALIYUN_REGISTRY
           
-          # 逐行读取 images.txt 文件
+          # 定义变量用于检测重复的镜像名称
+          declare -A duplicate_check
+          declare -A namespace_map
+          
+          # 第一次遍历：检测是否有重复的镜像名称
+          while IFS= read -r line || [ -n "$line" ]; do
+              # 跳过空行和注释行
+              [[ -z "$line" || $line =~ ^\s*# ]] && continue
+          
+              # 提取镜像名称（忽略 --platform 参数）
+              image=$(echo "$line" | awk '{print $NF}')
+              image=${image%%@*}  # 去除 @sha256 部分
+              image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')  # 提取镜像名称和标签
+              image_name=$(echo "$image_name_tag" | cut -d':' -f1)  # 提取镜像名称
+          
+              # 解析命名空间
+              if [[ $image == *"/"* ]]; then
+                  # 如果镜像包含命名空间（例如 homeassistant/home-assistant）
+                  namespace=$(echo "$image" | awk -F'/' '{if (NF>2) print $2; else print $1}')
+              else
+                  # 如果镜像是官方镜像（例如 ubuntu:latest），命名空间为 library
+                  namespace="library"
+              fi
+          
+              # 检测是否有重复的镜像名称
+              if [[ -n ${namespace_map["$image_name"]} && ${namespace_map["$image_name"]} != "$namespace" ]]; then
+                  duplicate_check["$image_name"]=1  # 标记为重复
+              fi
+              namespace_map["$image_name"]=$namespace  # 记录命名空间
+          done < images.txt
+          
+          # 第二次遍历：处理每个镜像
           while IFS= read -r line || [ -n "$line" ]; do
               # 跳过空行和注释行
               [[ -z "$line" || $line =~ ^\s*# ]] && continue
@@ -58,24 +89,35 @@ jobs:
               # 提取镜像名称
               image=$(echo "$line" | awk '{print $NF}')
               original_image=$image
-              # 去除镜像名称中的 @sha256 部分
-              image=${image%%@*}
+              image=${image%%@*}  # 去除 @sha256 部分
           
-              # 提取镜像的完整路径（命名空间/仓库:标签）
+              # 提取镜像名称和标签
+              image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
+              image_name=$(echo "$image_name_tag" | cut -d':' -f1)
+              tag=$(echo "$image_name_tag" | cut -d':' -f2 -s)
+          
+              # 解析命名空间
               if [[ $image == *"/"* ]]; then
-                  # 如果镜像包含命名空间（例如 homeassistant/home-assistant:2025.2.4）
-                  namespace_repo=$(echo "$image" | awk -F'/' '{if (NF>2) print $2"/"$3; else print $1"/"$2}')
+                  namespace=$(echo "$image" | awk -F'/' '{if (NF>2) print $2; else print $1}')
               else
-                  # 如果镜像是官方镜像（例如 ubuntu:latest），添加 library/ 前缀
-                  namespace_repo="library/$image"
+                  namespace="library"
               fi
           
-              # 如果需要，添加平台前缀
+              # 添加平台前缀（如果需要）
               platform_prefix=""
               [[ -n "$platform" ]] && platform_prefix="${platform//\//_}_"
           
+              # 如果镜像名称重复，添加命名空间前缀
+              if [[ -n ${duplicate_check["$image_name"]} ]]; then
+                  namespace_prefix="${namespace}_"
+              else
+                  namespace_prefix=""
+              fi
+          
               # 构建新的镜像名称
-              new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$platform_prefix$namespace_repo"
+              new_image_name="${platform_prefix}${namespace_prefix}${image_name}"
+              [[ -n "$tag" ]] && new_image_name+=":$tag"
+              new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$new_image_name"
           
               # 拉取镜像
               echo "正在拉取 $original_image..."
