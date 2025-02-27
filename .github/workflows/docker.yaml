@@ -6,123 +6,94 @@ on:
     branches: [ main ]
 
 env:
-  ALIYUN_REGISTRY: "${{ secrets.ALIYUN_REGISTRY }}"
-  ALIYUN_NAME_SPACE: "${{ secrets.ALIYUN_NAME_SPACE }}"
-  ALIYUN_REGISTRY_USER: "${{ secrets.ALIYUN_REGISTRY_USER }}"
-  ALIYUN_REGISTRY_PASSWORD: "${{ secrets.ALIYUN_REGISTRY_PASSWORD }}"
+  ALIYUN_REGISTRY: "${{ secrets.ALIYUN_REGISTRY }}"  # 阿里云镜像仓库地址
+  ALIYUN_NAME_SPACE: "${{ secrets.ALIYUN_NAME_SPACE }}"  # 阿里云命名空间
+  ALIYUN_REGISTRY_USER: "${{ secrets.ALIYUN_REGISTRY_USER }}"  # 阿里云镜像仓库用户名
+  ALIYUN_REGISTRY_PASSWORD: "${{ secrets.ALIYUN_REGISTRY_PASSWORD }}"  # 阿里云镜像仓库密码
 
 jobs:
   build:
-    name: Pull and Push Images
+    name: 拉取并推送镜像
     runs-on: ubuntu-latest
     steps:
-      - name: Check Disk Space Before Cleanup
+      - name: 清理磁盘空间前检查
         run: |
-          echo "Disk usage before cleanup:"
+          echo "清理前的磁盘使用情况："
           df -hT
 
-      - name: Free Up Disk Space
+      - name: 释放磁盘空间
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 2048
-          swap-size-mb: 128
-          remove-dotnet: 'true'
-          remove-haskell: 'true'
+          root-reserve-mb: 2048  # 保留 2048MB 的根分区空间
+          swap-size-mb: 128  # 设置 128MB 的交换空间
+          remove-dotnet: 'true'  # 移除 .NET 相关文件以释放空间
+          remove-haskell: 'true'  # 移除 Haskell 相关文件以释放空间
 
-      - name: Restart Docker Service
+      - name: 重启 Docker 服务
         run: sudo service docker restart
 
-      - name: Check Disk Space After Cleanup
+      - name: 清理磁盘空间后检查
         run: |
-          echo "Disk usage after cleanup:"
+          echo "清理后的磁盘使用情况："
           df -hT
 
-      - name: Checkout Repository
+      - name: 检出代码仓库
         uses: actions/checkout@v4
 
-      - name: Set Up Docker Buildx
+      - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Process Docker Images
+      - name: 处理 Docker 镜像
         run: |
+          # 登录阿里云镜像仓库
           docker login -u $ALIYUN_REGISTRY_USER -p $ALIYUN_REGISTRY_PASSWORD $ALIYUN_REGISTRY
           
-          declare -A duplicate_check
-          declare -A namespace_map
-          
-          # First Pass: Detect duplicate image names across namespaces
+          # 逐行读取 images.txt 文件
           while IFS= read -r line || [ -n "$line" ]; do
+              # 跳过空行和注释行
               [[ -z "$line" || $line =~ ^\s*# ]] && continue
           
-              # Extract image name (handle --platform)
-              image=$(echo "$line" | awk '{print $NF}')
-              image=${image%%@*}
-              image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
-              image_name=$(echo "$image_name_tag" | cut -d':' -f1)
-          
-              # Parse namespace (improved logic)
-              if [[ $image == *"/"* ]]; then
-                  registry_part=$(echo "$image" | awk -F'/' '{print $1}')
-                  if [[ $registry_part == *"."* || $registry_part == *":"* ]]; then
-                      # Registry with domain/port, namespace is the next part
-                      namespace=$(echo "$image" | awk -F'/' '{print $2}')
-                  else
-                      # Simple namespace (e.g., user/image)
-                      namespace=$registry_part
-                  fi
-              else
-                  # Official image without namespace
-                  namespace="library"
-              fi
-          
-              # Track duplicates across namespaces
-              if [[ -n ${namespace_map["$image_name"]} && ${namespace_map["$image_name"]} != "$namespace" ]]; then
-                  duplicate_check["$image_name"]=1
-              fi
-              namespace_map["$image_name"]=$namespace
-          done < images.txt
-          
-          # Second Pass: Process each image
-          while IFS= read -r line || [ -n "$line" ]; do
-              [[ -z "$line" || $line =~ ^\s*# ]] && continue
-          
-              # Extract platform and image
+              # 提取平台信息（如果有）
               platform=$(echo "$line" | grep -oP '--platform \K\S+' || true)
+              # 提取镜像名称
               image=$(echo "$line" | awk '{print $NF}')
               original_image=$image
+              # 去除镜像名称中的 @sha256 部分
               image=${image%%@*}
           
-              # Parse namespace again (consistent with first pass)
+              # 提取镜像的完整路径（命名空间/仓库:标签）
               if [[ $image == *"/"* ]]; then
-                  registry_part=$(echo "$image" | awk -F'/' '{print $1}')
-                  if [[ $registry_part == *"."* || $registry_part == *":"* ]]; then
-                      namespace=$(echo "$image" | awk -F'/' '{print $2}')
-                  else
-                      namespace=$registry_part
-                  fi
+                  # 如果镜像包含命名空间（例如 homeassistant/home-assistant:2025.2.4）
+                  namespace_repo=$(echo "$image" | awk -F'/' '{if (NF>2) print $2"/"$3; else print $1"/"$2}')
               else
-                  namespace="library"
+                  # 如果镜像是官方镜像（例如 ubuntu:latest），添加 library/ 前缀
+                  namespace_repo="library/$image"
               fi
           
-              image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
-              image_name=$(echo "$image_name_tag" | cut -d':' -f1)
-              tag=$(echo "$image_name_tag" | cut -d':' -f2 -s)
-          
-              # Generate new image name
+              # 如果需要，添加平台前缀
               platform_prefix=""
               [[ -n "$platform" ]] && platform_prefix="${platform//\//_}_"
-              [[ -n ${duplicate_check["$image_name"]} ]] && namespace_prefix="${namespace}_" || namespace_prefix=""
           
-              new_image_tag="${platform_prefix}${namespace_prefix}${image_name}"
-              [[ -n "$tag" ]] && new_image_tag+=":$tag"
+              # 构建新的镜像名称
+              new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$platform_prefix$namespace_repo"
           
-              new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$new_image_tag"
-          
-              # Pull, tag, and push
+              # 拉取镜像
+              echo "正在拉取 $original_image..."
               docker pull $original_image
+          
+              # 打标签
+              echo "正在将 $original_image 标记为 $new_image..."
               docker tag $original_image $new_image
+          
+              # 推送镜像
+              echo "正在推送 $new_image..."
               docker push $new_image
           
-              # Cleanup
+              # 清理本地镜像以释放磁盘空间
+              echo "正在清理 $original_image 和 $new_image..."
               docker rmi $original_image $new_image
+          
+              # 显示磁盘使用情况
+              echo "处理后的磁盘使用情况："
+              df -hT
           done < images.txt
