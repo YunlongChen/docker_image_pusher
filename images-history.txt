@@ -1,3 +1,7 @@
+# 2025-04-15
+louislam/uptime-kuma:1.23.16
+tailscale/tailscale:stable
+
 # 2025-04-03
 emqx/emqx:5.8.6
 nodered/node-red:4.0.9
