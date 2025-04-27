@@ -1,4 +1,3 @@
 # 这里每次都只存在新的镜像，或者是需要保持latest标签的镜像，否则可能造成Github Actions 的资源浪费
 
-louislam/uptime-kuma:1.23.16
-tailscale/tailscale:stable
+linuxserver/calibre-web:latest
